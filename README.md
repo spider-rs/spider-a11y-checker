@@ -6,6 +6,8 @@ Crawl websites and audit accessibility issues with actionable fix suggestions us
 
 **Live Demo:** [https://a11y-checker.spider.cloud](https://a11y-checker.spider.cloud)
 
+![Spider A11y Checker](./example.png)
+
 ## Features
 
 - Crawl any website using Spider Cloud API
