@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { useToast } from "@/components/ui/use-toast";
 
 interface A11yIssue {
   rule: string;
@@ -156,6 +157,16 @@ export default function Checker() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [filter, setFilter] = useState<Severity>("all");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("json");
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const copyUrl = (url: string) => {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedUrl(url);
+      toast({ title: "Copied", description: url });
+      setTimeout(() => setCopiedUrl(null), 2000);
+    });
+  };
 
   const audits = (data || []).filter((p) => p?.url && p?.content).map((p) => checkA11y(p.url, p.content));
   const avgScore = audits.length ? Math.round(audits.reduce((s, a) => s + a.score, 0) / audits.length) : 0;
@@ -285,41 +296,77 @@ export default function Checker() {
                 No pages have {filter} issues.
               </div>
             ) : (
-              <div className="border rounded-lg">
+              <div className="border rounded-lg overflow-hidden">
+                {/* Table Header */}
+                <div className="flex items-center gap-3 px-3 py-2 bg-muted/50 text-xs font-medium text-muted-foreground border-b">
+                  <span className="w-12 text-center">Score</span>
+                  <span className="flex-1">Page URL</span>
+                  <span className="w-32 text-center hidden sm:block">Issues</span>
+                  <span className="w-6"></span>
+                </div>
                 {filteredAudits.map((audit) => {
                   const filteredIssues = filter === "all" ? audit.issues : audit.issues.filter((i) => i.severity === filter);
                   const isExpanded = expanded === audit.url;
+                  const pageErrors = audit.issues.filter((i) => i.severity === "error").length;
+                  const pageWarnings = audit.issues.filter((i) => i.severity === "warning").length;
                   return (
                     <div key={audit.url} className="border-b last:border-b-0">
-                      <button
-                        className="w-full flex items-center gap-3 p-3 hover:bg-muted/50 text-left transition-colors"
+                      <div
+                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/30 transition-colors cursor-pointer"
                         onClick={() => setExpanded(isExpanded ? null : audit.url)}
                       >
-                        <span className={`text-sm font-bold w-8 text-center ${scoreColor(audit.score)}`}>{audit.score}</span>
-                        <span className="flex-1 truncate text-sm font-mono">{audit.url}</span>
-                        <div className="flex gap-1.5 shrink-0">
-                          {audit.issues.filter((i) => i.severity === "error").length > 0 && (
+                        <span className={`text-sm font-bold w-12 text-center ${scoreColor(audit.score)}`}>{audit.score}</span>
+                        <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                          <a
+                            href={audit.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="truncate font-mono text-xs hover:text-primary hover:underline"
+                            title={audit.url}
+                          >
+                            {audit.url}
+                          </a>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); copyUrl(audit.url); }}
+                            className="shrink-0 p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                            title="Copy URL"
+                          >
+                            {copiedUrl === audit.url ? (
+                              <svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                            ) : (
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                            )}
+                          </button>
+                        </div>
+                        <div className="w-32 hidden sm:flex gap-1.5 justify-center shrink-0">
+                          {pageErrors > 0 && (
                             <Badge variant="destructive" className="text-[10px]">
-                              {audit.issues.filter((i) => i.severity === "error").length} errors
+                              {pageErrors} {pageErrors === 1 ? "error" : "errors"}
                             </Badge>
                           )}
-                          {audit.issues.filter((i) => i.severity === "warning").length > 0 && (
+                          {pageWarnings > 0 && (
                             <Badge variant="secondary" className="text-[10px]">
-                              {audit.issues.filter((i) => i.severity === "warning").length} warnings
+                              {pageWarnings} {pageWarnings === 1 ? "warn" : "warns"}
+                            </Badge>
+                          )}
+                          {pageErrors === 0 && pageWarnings === 0 && (
+                            <Badge variant="outline" className="text-[10px] text-green-400 border-green-500/30">
+                              Pass
                             </Badge>
                           )}
                         </div>
-                        <span className="text-muted-foreground text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
-                      </button>
+                        <span className="text-muted-foreground text-xs w-6 text-center shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                      </div>
                       {isExpanded && (
-                        <div className="px-4 pb-4 space-y-2">
+                        <div className="px-4 pb-4 pt-1 space-y-2 bg-muted/10">
                           {filteredIssues.length === 0 ? (
                             <p className="text-sm text-muted-foreground text-center py-3">
                               No {filter} issues on this page.
                             </p>
                           ) : (
                             filteredIssues.map((issue, i) => (
-                              <div key={i} className="border rounded-lg p-3 text-sm">
+                              <div key={i} className="border rounded-lg p-3 text-sm bg-background">
                                 <div className="flex items-center gap-2 mb-1">
                                   <Badge
                                     variant={issue.severity === "error" ? "destructive" : issue.severity === "warning" ? "secondary" : "outline"}
