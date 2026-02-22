@@ -3,6 +3,10 @@
 import { useState } from "react";
 import SearchBar from "./searchbar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 
 interface A11yIssue {
   rule: string;
@@ -21,20 +25,17 @@ function checkA11y(url: string, html: string): PageAudit {
   const issues: A11yIssue[] = [];
   let score = 100;
 
-  // Missing lang attribute
   if (!/<html[^>]*lang=/i.test(html)) {
     issues.push({ rule: "html-lang", severity: "error", message: "Missing lang attribute on <html>", suggestion: 'Add lang="en" to the <html> tag' });
     score -= 10;
   }
 
-  // Images without alt
   const noAltImgs = (html.match(/<img(?![^>]*alt=)[^>]*>/gi) || []).length;
   if (noAltImgs > 0) {
     issues.push({ rule: "img-alt", severity: "error", message: `${noAltImgs} image(s) missing alt attribute`, suggestion: "Add descriptive alt text to all images" });
     score -= Math.min(20, noAltImgs * 5);
   }
 
-  // Multiple H1s
   const h1Count = (html.match(/<h1[\s>]/gi) || []).length;
   if (h1Count > 1) {
     issues.push({ rule: "single-h1", severity: "warning", message: `${h1Count} H1 tags found`, suggestion: "Use only one H1 per page" });
@@ -44,7 +45,6 @@ function checkA11y(url: string, html: string): PageAudit {
     score -= 5;
   }
 
-  // Skipped heading levels
   const headingLevels = (html.match(/<h([1-6])[\s>]/gi) || []).map((m) => parseInt(m[2]));
   for (let i = 1; i < headingLevels.length; i++) {
     if (headingLevels[i] - headingLevels[i - 1] > 1) {
@@ -54,14 +54,12 @@ function checkA11y(url: string, html: string): PageAudit {
     }
   }
 
-  // Empty links
   const emptyLinks = (html.match(/<a[^>]*>\s*<\/a>/gi) || []).length;
   if (emptyLinks > 0) {
     issues.push({ rule: "empty-links", severity: "error", message: `${emptyLinks} empty link(s) found`, suggestion: "Add text content or aria-label to links" });
     score -= Math.min(10, emptyLinks * 3);
   }
 
-  // Missing form labels
   const inputs = (html.match(/<input[^>]*type=["'](?:text|email|password|tel|number|search)["'][^>]*>/gi) || []).length;
   const labels = (html.match(/<label/gi) || []).length;
   if (inputs > labels) {
@@ -69,7 +67,6 @@ function checkA11y(url: string, html: string): PageAudit {
     score -= Math.min(15, (inputs - labels) * 5);
   }
 
-  // Missing ARIA landmarks
   const hasMain = /<main[\s>]/i.test(html) || /role=["']main["']/i.test(html);
   const hasNav = /<nav[\s>]/i.test(html) || /role=["']navigation["']/i.test(html);
   if (!hasMain) {
@@ -81,71 +78,296 @@ function checkA11y(url: string, html: string): PageAudit {
     score -= 2;
   }
 
-  if (issues.length === 0) {
-    issues.push({ rule: "all-clear", severity: "info", message: "No accessibility issues detected", suggestion: "Consider manual testing with a screen reader" });
-  }
-
   return { url, score: Math.max(0, score), issues };
+}
+
+type Severity = "all" | "error" | "warning" | "info";
+
+function scoreColor(score: number): string {
+  if (score >= 80) return "text-green-400";
+  if (score >= 50) return "text-yellow-400";
+  return "text-red-400";
+}
+
+function scoreBorder(score: number): string {
+  if (score >= 80) return "border-green-500";
+  if (score >= 50) return "border-yellow-500";
+  return "border-red-500";
+}
+
+function scoreBg(score: number): string {
+  if (score >= 90) return "bg-green-500/10 border-green-500/20";
+  if (score >= 70) return "bg-yellow-500/10 border-yellow-500/20";
+  if (score >= 50) return "bg-orange-500/10 border-orange-500/20";
+  return "bg-red-500/10 border-red-500/20";
+}
+
+type ExportFormat = "json" | "csv" | "markdown";
+
+function downloadBlob(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportAudits(audits: PageAudit[], format: ExportFormat) {
+  const ts = new Date().toISOString().slice(0, 10);
+  if (format === "json") {
+    downloadBlob(JSON.stringify(audits, null, 2), `a11y-audit-${ts}.json`, "application/json");
+  } else if (format === "csv") {
+    const rows = [["URL", "Score", "Rule", "Severity", "Message", "Suggestion"]];
+    for (const a of audits) {
+      if (a.issues.length === 0) {
+        rows.push([a.url, String(a.score), "", "", "No issues", ""]);
+      } else {
+        for (const i of a.issues) {
+          rows.push([a.url, String(a.score), i.rule, i.severity, i.message, i.suggestion]);
+        }
+      }
+    }
+    const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
+    downloadBlob(csv, `a11y-audit-${ts}.csv`, "text/csv");
+  } else {
+    let md = `# Accessibility Audit Report\n\n**Date:** ${ts}\n**Pages Audited:** ${audits.length}\n\n`;
+    const avg = audits.length ? Math.round(audits.reduce((s, a) => s + a.score, 0) / audits.length) : 0;
+    md += `**Average Score:** ${avg}/100\n\n---\n\n`;
+    for (const a of audits) {
+      md += `## ${a.url}\n\n**Score:** ${a.score}/100\n\n`;
+      if (a.issues.length === 0) {
+        md += "No issues found.\n\n";
+      } else {
+        md += "| Severity | Rule | Message | Suggestion |\n|----------|------|---------|------------|\n";
+        for (const i of a.issues) {
+          md += `| ${i.severity.toUpperCase()} | ${i.rule} | ${i.message} | ${i.suggestion} |\n`;
+        }
+        md += "\n";
+      }
+    }
+    downloadBlob(md, `a11y-audit-${ts}.md`, "text/markdown");
+  }
 }
 
 export default function Checker() {
   const [data, setData] = useState<any[] | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"all" | "error" | "warning" | "info">("all");
+  const [filter, setFilter] = useState<Severity>("all");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("json");
 
   const audits = (data || []).filter((p) => p?.url && p?.content).map((p) => checkA11y(p.url, p.content));
   const avgScore = audits.length ? Math.round(audits.reduce((s, a) => s + a.score, 0) / audits.length) : 0;
-  const totalErrors = audits.reduce((s, a) => s + a.issues.filter((i) => i.severity === "error").length, 0);
-  const totalWarnings = audits.reduce((s, a) => s + a.issues.filter((i) => i.severity === "warning").length, 0);
+
+  const allIssues = audits.flatMap((a) => a.issues);
+  const errorCount = allIssues.filter((i) => i.severity === "error").length;
+  const warningCount = allIssues.filter((i) => i.severity === "warning").length;
+  const infoCount = allIssues.filter((i) => i.severity === "info").length;
+
+  // Filter audits: show only pages that have issues matching the filter
+  const filteredAudits = filter === "all"
+    ? audits
+    : audits.filter((a) => a.issues.some((i) => i.severity === filter));
+
+  const filterCounts: Record<Severity, number> = {
+    all: audits.length,
+    error: audits.filter((a) => a.issues.some((i) => i.severity === "error")).length,
+    warning: audits.filter((a) => a.issues.some((i) => i.severity === "warning")).length,
+    info: audits.filter((a) => a.issues.some((i) => i.severity === "info")).length,
+  };
 
   return (
     <div className="flex flex-col h-screen">
       <SearchBar setDataValues={setData} />
-      <div className="flex-1 overflow-auto p-4">
-        {audits.length > 0 && (
+      <div className="flex-1 overflow-auto p-4 max-w-5xl mx-auto w-full">
+        {audits.length > 0 ? (
           <>
-            <div className="flex items-center gap-6 mb-6">
-              <div className={`w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold border-4 ${avgScore >= 80 ? "border-green-500 text-green-500" : avgScore >= 50 ? "border-yellow-500 text-yellow-500" : "border-red-500 text-red-500"}`}>
-                {avgScore}
-              </div>
-              <div className="flex gap-6">
-                <div className="text-center"><p className="text-xl font-bold text-red-500">{totalErrors}</p><p className="text-xs text-muted-foreground">Errors</p></div>
-                <div className="text-center"><p className="text-xl font-bold text-yellow-500">{totalWarnings}</p><p className="text-xs text-muted-foreground">Warnings</p></div>
-                <div className="text-center"><p className="text-xl font-bold">{audits.length}</p><p className="text-xs text-muted-foreground">Pages</p></div>
-              </div>
-            </div>
-            <div className="flex gap-2 mb-4">
-              {(["all", "error", "warning", "info"] as const).map((f) => (
-                <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1 rounded text-xs capitalize ${filter === f ? "bg-primary text-primary-foreground" : "bg-muted"}`}>{f}</button>
-              ))}
-            </div>
-            <div className="border rounded-lg">
-              {audits.map((audit) => (
-                <div key={audit.url} className="border-b last:border-b-0">
-                  <button className="w-full flex items-center gap-3 p-3 hover:bg-muted/50 text-left" onClick={() => setExpanded(expanded === audit.url ? null : audit.url)}>
-                    <span className={`text-sm font-bold ${audit.score >= 80 ? "text-green-500" : audit.score >= 50 ? "text-yellow-500" : "text-red-500"}`}>{audit.score}</span>
-                    <span className="flex-1 truncate text-sm">{audit.url}</span>
-                  </button>
-                  {expanded === audit.url && (
-                    <div className="px-6 pb-3 space-y-2">
-                      {audit.issues.filter((i) => filter === "all" || i.severity === filter).map((issue, i) => (
-                        <div key={i} className="border rounded p-2 text-sm">
-                          <div className="flex items-center gap-2">
-                            <Badge variant={issue.severity === "error" ? "destructive" : issue.severity === "warning" ? "secondary" : "outline"} className="text-xs">{issue.severity}</Badge>
-                            <span className="font-medium">{issue.rule}</span>
-                          </div>
-                          <p className="mt-1">{issue.message}</p>
-                          <p className="text-xs text-muted-foreground mt-1">Fix: {issue.suggestion}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+            {/* Stats Dashboard */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+              <div className={`border rounded-lg p-4 text-center ${scoreBg(avgScore)}`}>
+                <div className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold border-4 mx-auto ${scoreBorder(avgScore)} ${scoreColor(avgScore)}`}>
+                  {avgScore}
                 </div>
+                <p className="text-xs text-muted-foreground mt-2">Avg Score</p>
+              </div>
+              <div className="border rounded-lg p-4 text-center">
+                <p className="text-2xl font-bold">{audits.length}</p>
+                <p className="text-xs text-muted-foreground mt-1">Pages Audited</p>
+              </div>
+              <div className="border rounded-lg p-4 text-center bg-red-500/10 border-red-500/20">
+                <p className="text-2xl font-bold text-red-400">{errorCount}</p>
+                <p className="text-xs text-muted-foreground mt-1">Errors</p>
+              </div>
+              <div className="border rounded-lg p-4 text-center bg-yellow-500/10 border-yellow-500/20">
+                <p className="text-2xl font-bold text-yellow-400">{warningCount}</p>
+                <p className="text-xs text-muted-foreground mt-1">Warnings</p>
+              </div>
+              <div className="border rounded-lg p-4 text-center bg-blue-500/10 border-blue-500/20">
+                <p className="text-2xl font-bold text-blue-400">{infoCount}</p>
+                <p className="text-xs text-muted-foreground mt-1">Info</p>
+              </div>
+            </div>
+
+            {/* Result Banner */}
+            {errorCount === 0 && warningCount === 0 ? (
+              <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 mb-6 text-center">
+                <p className="text-green-400 font-semibold text-lg">All pages pass accessibility checks!</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  No errors or warnings found across {audits.length} pages. Consider manual testing with a screen reader for thorough coverage.
+                </p>
+              </div>
+            ) : errorCount > 0 ? (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 mb-6 text-center">
+                <p className="text-red-400 font-semibold text-lg">
+                  {errorCount} error{errorCount !== 1 ? "s" : ""} and {warningCount} warning{warningCount !== 1 ? "s" : ""} found
+                </p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Expand each page below to see issues and how to fix them.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 mb-6 text-center">
+                <p className="text-yellow-400 font-semibold text-lg">
+                  {warningCount} warning{warningCount !== 1 ? "s" : ""} found
+                </p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  No critical errors, but some improvements are recommended.
+                </p>
+              </div>
+            )}
+
+            {/* Download Controls */}
+            <div className="flex items-center gap-2 mb-4">
+              <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as ExportFormat)}>
+                <SelectTrigger className="w-[130px] h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="json">JSON</SelectItem>
+                  <SelectItem value="csv">CSV</SelectItem>
+                  <SelectItem value="markdown">Markdown</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => exportAudits(audits, exportFormat)}>
+                Download All ({audits.length})
+              </Button>
+              {filter !== "all" && filteredAudits.length > 0 && (
+                <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => exportAudits(filteredAudits, exportFormat)}>
+                  Download Filtered ({filteredAudits.length})
+                </Button>
+              )}
+            </div>
+
+            {/* Filter Tabs */}
+            <div className="flex gap-2 mb-4 flex-wrap">
+              {([
+                ["all", "All"],
+                ["error", "Errors"],
+                ["warning", "Warnings"],
+                ["info", "Info"],
+              ] as [Severity, string][]).map(([key, label]) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  variant={filter === key ? "default" : "outline"}
+                  onClick={() => setFilter(key)}
+                  className="text-xs"
+                >
+                  {label} ({filterCounts[key]})
+                </Button>
               ))}
             </div>
+
+            {/* Page List */}
+            {filteredAudits.length === 0 ? (
+              <div className="border rounded-lg p-8 text-center text-muted-foreground">
+                No pages have {filter} issues.
+              </div>
+            ) : (
+              <div className="border rounded-lg">
+                {filteredAudits.map((audit) => {
+                  const filteredIssues = filter === "all" ? audit.issues : audit.issues.filter((i) => i.severity === filter);
+                  const isExpanded = expanded === audit.url;
+                  return (
+                    <div key={audit.url} className="border-b last:border-b-0">
+                      <button
+                        className="w-full flex items-center gap-3 p-3 hover:bg-muted/50 text-left transition-colors"
+                        onClick={() => setExpanded(isExpanded ? null : audit.url)}
+                      >
+                        <span className={`text-sm font-bold w-8 text-center ${scoreColor(audit.score)}`}>{audit.score}</span>
+                        <span className="flex-1 truncate text-sm font-mono">{audit.url}</span>
+                        <div className="flex gap-1.5 shrink-0">
+                          {audit.issues.filter((i) => i.severity === "error").length > 0 && (
+                            <Badge variant="destructive" className="text-[10px]">
+                              {audit.issues.filter((i) => i.severity === "error").length} errors
+                            </Badge>
+                          )}
+                          {audit.issues.filter((i) => i.severity === "warning").length > 0 && (
+                            <Badge variant="secondary" className="text-[10px]">
+                              {audit.issues.filter((i) => i.severity === "warning").length} warnings
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="text-muted-foreground text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                      </button>
+                      {isExpanded && (
+                        <div className="px-4 pb-4 space-y-2">
+                          {filteredIssues.length === 0 ? (
+                            <p className="text-sm text-muted-foreground text-center py-3">
+                              No {filter} issues on this page.
+                            </p>
+                          ) : (
+                            filteredIssues.map((issue, i) => (
+                              <div key={i} className="border rounded-lg p-3 text-sm">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Badge
+                                    variant={issue.severity === "error" ? "destructive" : issue.severity === "warning" ? "secondary" : "outline"}
+                                    className="text-[10px]"
+                                  >
+                                    {issue.severity.toUpperCase()}
+                                  </Badge>
+                                  <span className="font-mono text-xs text-muted-foreground">{issue.rule}</span>
+                                </div>
+                                <p className="font-medium">{issue.message}</p>
+                                <p className="text-xs text-muted-foreground mt-1">{issue.suggestion}</p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+            <svg
+              height={64}
+              width={64}
+              viewBox="0 0 36 34"
+              xmlSpace="preserve"
+              xmlns="http://www.w3.org/2000/svg"
+              className="fill-[#3bde77] opacity-30 animate-spider-pulse"
+            >
+              <path
+                fillRule="evenodd"
+                clipRule="evenodd"
+                d="M9.13883 7.06589V0.164429L13.0938 0.164429V6.175L14.5178 7.4346C15.577 6.68656 16.7337 6.27495 17.945 6.27495C19.1731 6.27495 20.3451 6.69807 21.4163 7.46593L22.8757 6.175V0.164429L26.8307 0.164429V7.06589V7.95679L26.1634 8.54706L24.0775 10.3922C24.3436 10.8108 24.5958 11.2563 24.8327 11.7262L26.0467 11.4215L28.6971 8.08749L31.793 10.5487L28.7257 14.407L28.3089 14.9313L27.6592 15.0944L26.2418 15.4502C26.3124 15.7082 26.3793 15.9701 26.4422 16.2355L28.653 16.6566L29.092 16.7402L29.4524 17.0045L35.3849 21.355L33.0461 24.5444L27.474 20.4581L27.0719 20.3816C27.1214 21.0613 27.147 21.7543 27.147 22.4577C27.147 22.5398 27.1466 22.6214 27.1459 22.7024L29.5889 23.7911L30.3219 24.1177L30.62 24.8629L33.6873 32.5312L30.0152 34L27.246 27.0769L26.7298 26.8469C25.5612 32.2432 22.0701 33.8808 17.945 33.8808C13.8382 33.8808 10.3598 32.2577 9.17593 26.9185L8.82034 27.0769L6.05109 34L2.37897 32.5312L5.44629 24.8629L5.74435 24.1177L6.47743 23.7911L8.74487 22.7806C8.74366 22.6739 8.74305 22.5663 8.74305 22.4577C8.74305 21.7616 8.76804 21.0758 8.81654 20.4028L8.52606 20.4581L2.95395 24.5444L0.615112 21.355L6.54761 17.0045L6.908 16.7402L7.34701 16.6566L9.44264 16.2575C9.50917 15.9756 9.5801 15.6978 9.65528 15.4242L8.34123 15.0944L7.69155 14.9313L7.27471 14.407L4.20739 10.5487L7.30328 8.08749L9.95376 11.4215L11.0697 11.7016C11.3115 11.2239 11.5692 10.7716 11.8412 10.3473L9.80612 8.54706L9.13883 7.95679V7.06589Z"
+              ></path>
+            </svg>
+            <h2 className="text-xl font-semibold text-muted-foreground">
+              Spider A11y Checker
+            </h2>
+            <p className="text-sm text-muted-foreground max-w-md">
+              Enter a website URL above to crawl and audit for accessibility issues.
+              Spider will check for WCAG violations including missing alt text,
+              heading order, ARIA landmarks, form labels, and more.
+            </p>
+          </div>
         )}
-        {!data && <div className="flex items-center justify-center h-full text-muted-foreground">Enter a URL to audit accessibility</div>}
       </div>
     </div>
   );
