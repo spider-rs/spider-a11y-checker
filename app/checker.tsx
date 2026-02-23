@@ -83,6 +83,9 @@ function checkA11y(url: string, html: string): PageAudit {
 }
 
 type Severity = "all" | "error" | "warning" | "info";
+type SortKey = "score" | "url" | "issues";
+type SortDir = "asc" | "desc";
+type ExportFormat = "json" | "csv" | "markdown";
 
 function scoreColor(score: number): string {
   if (score >= 80) return "text-green-400";
@@ -90,10 +93,10 @@ function scoreColor(score: number): string {
   return "text-red-400";
 }
 
-function scoreBorder(score: number): string {
-  if (score >= 80) return "border-green-500";
-  if (score >= 50) return "border-yellow-500";
-  return "border-red-500";
+function scoreStroke(score: number): string {
+  if (score >= 80) return "#4ade80";
+  if (score >= 50) return "#facc15";
+  return "#f87171";
 }
 
 function scoreBg(score: number): string {
@@ -102,8 +105,6 @@ function scoreBg(score: number): string {
   if (score >= 50) return "bg-orange-500/10 border-orange-500/20";
   return "bg-red-500/10 border-red-500/20";
 }
-
-type ExportFormat = "json" | "csv" | "markdown";
 
 function downloadBlob(content: string, filename: string, mime: string) {
   const blob = new Blob([content], { type: mime });
@@ -152,10 +153,43 @@ function exportAudits(audits: PageAudit[], format: ExportFormat) {
   }
 }
 
+function ScoreRing({ score, size = 72 }: { score: number; size?: number }) {
+  const r = (size - 8) / 2;
+  const circumference = 2 * Math.PI * r;
+  const offset = circumference - (score / 100) * circumference;
+  return (
+    <svg width={size} height={size} className="block">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={4} className="text-muted/30" />
+      <circle
+        cx={size / 2} cy={size / 2} r={r} fill="none"
+        stroke={scoreStroke(score)} strokeWidth={4}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        className="transition-all duration-700"
+      />
+      <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central" className={`text-lg font-bold fill-current ${scoreColor(score)}`}>
+        {score}
+      </text>
+    </svg>
+  );
+}
+
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  return (
+    <span className={`inline-block ml-1 text-[10px] ${active ? "text-[#3bde77]" : "text-muted-foreground/40"}`}>
+      {active ? (dir === "asc" ? "▲" : "▼") : "⇅"}
+    </span>
+  );
+}
+
 export default function Checker() {
   const [data, setData] = useState<any[] | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [filter, setFilter] = useState<Severity>("all");
+  const [sortKey, setSortKey] = useState<SortKey>("score");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("json");
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const { toast } = useToast();
@@ -168,6 +202,15 @@ export default function Checker() {
     });
   };
 
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir(key === "url" ? "asc" : "asc");
+    }
+  };
+
   const audits = (data || []).filter((p) => p?.url && p?.content).map((p) => checkA11y(p.url, p.content));
   const avgScore = audits.length ? Math.round(audits.reduce((s, a) => s + a.score, 0) / audits.length) : 0;
 
@@ -176,10 +219,19 @@ export default function Checker() {
   const warningCount = allIssues.filter((i) => i.severity === "warning").length;
   const infoCount = allIssues.filter((i) => i.severity === "info").length;
 
-  // Filter audits: show only pages that have issues matching the filter
+  // Filter
   const filteredAudits = filter === "all"
     ? audits
     : audits.filter((a) => a.issues.some((i) => i.severity === filter));
+
+  // Sort
+  const sortedAudits = [...filteredAudits].sort((a, b) => {
+    let cmp = 0;
+    if (sortKey === "score") cmp = a.score - b.score;
+    else if (sortKey === "url") cmp = a.url.localeCompare(b.url);
+    else cmp = a.issues.length - b.issues.length;
+    return sortDir === "asc" ? cmp : -cmp;
+  });
 
   const filterCounts: Record<Severity, number> = {
     all: audits.length,
@@ -188,6 +240,15 @@ export default function Checker() {
     info: audits.filter((a) => a.issues.some((i) => i.severity === "info")).length,
   };
 
+  // Score distribution for mini bar chart
+  const scoreBuckets = [
+    { label: "90-100", count: audits.filter((a) => a.score >= 90).length, color: "bg-green-500" },
+    { label: "70-89", count: audits.filter((a) => a.score >= 70 && a.score < 90).length, color: "bg-green-500/60" },
+    { label: "50-69", count: audits.filter((a) => a.score >= 50 && a.score < 70).length, color: "bg-yellow-500" },
+    { label: "0-49", count: audits.filter((a) => a.score < 50).length, color: "bg-red-500" },
+  ];
+  const maxBucket = Math.max(1, ...scoreBuckets.map((b) => b.count));
+
   return (
     <div className="flex flex-col h-screen">
       <SearchBar setDataValues={setData} />
@@ -195,28 +256,42 @@ export default function Checker() {
         {audits.length > 0 ? (
           <>
             {/* Stats Dashboard */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-              <div className={`border rounded-lg p-4 text-center ${scoreBg(avgScore)}`}>
-                <div className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold border-4 mx-auto ${scoreBorder(avgScore)} ${scoreColor(avgScore)}`}>
-                  {avgScore}
-                </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+              <div className={`border rounded-lg p-4 flex flex-col items-center ${scoreBg(avgScore)}`}>
+                <ScoreRing score={avgScore} />
                 <p className="text-xs text-muted-foreground mt-2">Avg Score</p>
               </div>
-              <div className="border rounded-lg p-4 text-center">
+              <div className="border rounded-lg p-4 text-center flex flex-col justify-center">
                 <p className="text-2xl font-bold">{audits.length}</p>
-                <p className="text-xs text-muted-foreground mt-1">Pages Audited</p>
+                <p className="text-xs text-muted-foreground mt-1">Pages</p>
               </div>
-              <div className="border rounded-lg p-4 text-center bg-red-500/10 border-red-500/20">
+              <div className="border rounded-lg p-4 text-center bg-red-500/10 border-red-500/20 flex flex-col justify-center">
                 <p className="text-2xl font-bold text-red-400">{errorCount}</p>
                 <p className="text-xs text-muted-foreground mt-1">Errors</p>
               </div>
-              <div className="border rounded-lg p-4 text-center bg-yellow-500/10 border-yellow-500/20">
+              <div className="border rounded-lg p-4 text-center bg-yellow-500/10 border-yellow-500/20 flex flex-col justify-center">
                 <p className="text-2xl font-bold text-yellow-400">{warningCount}</p>
                 <p className="text-xs text-muted-foreground mt-1">Warnings</p>
               </div>
-              <div className="border rounded-lg p-4 text-center bg-blue-500/10 border-blue-500/20">
+              <div className="border rounded-lg p-4 text-center bg-blue-500/10 border-blue-500/20 flex flex-col justify-center">
                 <p className="text-2xl font-bold text-blue-400">{infoCount}</p>
                 <p className="text-xs text-muted-foreground mt-1">Info</p>
+              </div>
+              {/* Score Distribution */}
+              <div className="border rounded-lg p-4 flex flex-col justify-center">
+                <div className="flex items-end gap-1 h-10 mb-1">
+                  {scoreBuckets.map((b) => (
+                    <div key={b.label} className="flex-1 flex flex-col items-center">
+                      <div className={`w-full rounded-t ${b.color}`} style={{ height: `${(b.count / maxBucket) * 40}px`, minHeight: b.count > 0 ? 4 : 0 }} />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-1 text-[9px] text-muted-foreground">
+                  {scoreBuckets.map((b) => (
+                    <span key={b.label} className="flex-1 text-center">{b.count}</span>
+                  ))}
+                </div>
+                <p className="text-[9px] text-muted-foreground text-center mt-1">Score Dist.</p>
               </div>
             </div>
 
@@ -263,9 +338,9 @@ export default function Checker() {
               <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => exportAudits(audits, exportFormat)}>
                 Download All ({audits.length})
               </Button>
-              {filter !== "all" && filteredAudits.length > 0 && (
-                <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => exportAudits(filteredAudits, exportFormat)}>
-                  Download Filtered ({filteredAudits.length})
+              {filter !== "all" && sortedAudits.length > 0 && (
+                <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => exportAudits(sortedAudits, exportFormat)}>
+                  Download Filtered ({sortedAudits.length})
                 </Button>
               )}
             </div>
@@ -291,7 +366,7 @@ export default function Checker() {
             </div>
 
             {/* Page List */}
-            {filteredAudits.length === 0 ? (
+            {sortedAudits.length === 0 ? (
               <div className="border rounded-lg p-8 text-center text-muted-foreground">
                 No pages have {filter} issues.
               </div>
@@ -299,12 +374,18 @@ export default function Checker() {
               <div className="border rounded-lg overflow-hidden">
                 {/* Table Header */}
                 <div className="flex items-center gap-3 px-3 py-2 bg-muted/50 text-xs font-medium text-muted-foreground border-b">
-                  <span className="w-12 text-center">Score</span>
-                  <span className="flex-1">Page URL</span>
-                  <span className="w-32 text-center hidden sm:block">Issues</span>
+                  <button className="w-12 text-center hover:text-foreground transition-colors" onClick={() => toggleSort("score")}>
+                    Score<SortIcon active={sortKey === "score"} dir={sortDir} />
+                  </button>
+                  <button className="flex-1 text-left hover:text-foreground transition-colors" onClick={() => toggleSort("url")}>
+                    Page URL<SortIcon active={sortKey === "url"} dir={sortDir} />
+                  </button>
+                  <button className="w-32 text-center hidden sm:block hover:text-foreground transition-colors" onClick={() => toggleSort("issues")}>
+                    Issues<SortIcon active={sortKey === "issues"} dir={sortDir} />
+                  </button>
                   <span className="w-6"></span>
                 </div>
-                {filteredAudits.map((audit) => {
+                {sortedAudits.map((audit) => {
                   const filteredIssues = filter === "all" ? audit.issues : audit.issues.filter((i) => i.severity === filter);
                   const isExpanded = expanded === audit.url;
                   const pageErrors = audit.issues.filter((i) => i.severity === "error").length;
@@ -397,7 +478,7 @@ export default function Checker() {
               viewBox="0 0 36 34"
               xmlSpace="preserve"
               xmlns="http://www.w3.org/2000/svg"
-              className="fill-[#3bde77] opacity-30 animate-spider-pulse"
+              className="fill-[#3bde77] opacity-30"
             >
               <path
                 fillRule="evenodd"
