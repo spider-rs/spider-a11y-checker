@@ -50,7 +50,34 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={inter.className}>{children}<Analytics />
+      <body className={inter.className}>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "WebApplication",
+              name: "Spider A11y Checker",
+              url: "https://a11y-checker.spider.cloud",
+              description:
+                "Audit any website for accessibility issues and WCAG compliance.",
+              applicationCategory: "WebApplication",
+              operatingSystem: "Any",
+              offers: {
+                "@type": "Offer",
+                price: "0",
+                priceCurrency: "USD",
+              },
+              author: {
+                "@type": "Organization",
+                name: "Spider",
+                url: "https://spider.cloud",
+              },
+            }),
+          }}
+        />
+        {children}
+        <Analytics />
       </body>
     </html>
   );
